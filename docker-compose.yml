@@ -1,0 +1,78 @@
+services:
+  neo4j:
+    image: neo4j:5.26.0
+    container_name: iah-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-industrialneo4j}
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1' >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    networks:
+      - agent-net
+
+  seed:
+    build: .
+    image: industrial-agent-harness:local
+    command: python -m graph.seed_graph --reset
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-industrialneo4j}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - agent-net
+
+  app:
+    build: .
+    image: industrial-agent-harness:local
+    container_name: iah-app
+    ports:
+      - "8501:8501"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-industrialneo4j}
+      APPROVAL_MODE: streamlit
+      APPROVER_ID: ${APPROVER_ID:-supervisor-demo}
+      AUDIT_LOG_PATH: /app/var/audit_chain.jsonl
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:-dev-insecure-change-me}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      PRELOOP_URL: ${PRELOOP_URL:-}
+      PRELOOP_TOKEN: ${PRELOOP_TOKEN:-}
+    volumes:
+      - audit_data:/app/var
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    networks:
+      - agent-net
+
+volumes:
+  neo4j_data:
+  audit_data:
+
+networks:
+  agent-net:
+    driver: bridge

@@ -1,0 +1,7 @@
+tools:
+  query_knowledge_graph:
+    policy: auto
+  propose_maintenance_action:
+    policy: auto
+  execute_maintenance_action:
+    policy: require_approval
