@@ -8,7 +8,8 @@ Ce dépôt démontre une chaîne complète, exécutable et testable :
 2. il propose une action de maintenance, puis demande son exécution ;
 3. le harness intercepte l'action, applique une politique et **bloque l'exécution tant qu'un humain n'a pas approuvé** ;
 4. chaque appel, proposition, demande, décision et résultat est inscrit dans un **registre d'audit chaîné par HMAC** ;
-5. l'opérateur approuve ou rejette depuis une console **Streamlit** exécutée dans le même processus que l'agent.
+5. l'opérateur approuve ou rejette depuis une console **Streamlit** exécutée dans le même processus que l'agent ;
+6. la console affiche le **sous-graphe de raisonnement animé**, le contexte complet de la décision et une **démonstration de falsification** appliquée à une copie isolée du registre.
 
 Le scénario de référence est : **« L'équipement P-204 présente une vibration anormale. Que faire ? »**
 
@@ -35,11 +36,11 @@ Le PoC répond à ces exigences avec deux propriétés centrales :
 | Exigence AI Act | Mécanisme implémenté | Preuve observable |
 |---|---|---|
 | **Art. 12 — Journalisation automatique** | `harness/audit.py` : chaque `tool_call`, `approval_requested`, `approval_decided`, `tool_result`, `tool_blocked` et cycle d'agent est journalisé avec horodatage UTC, acteur, outil et payload | `verify_audit_chain()` retourne `{"valid": true, "events_checked": N}` ; l'UI affiche la vérification |
-| **Art. 12 — Traçabilité des données et du raisonnement** | Contexte GraphRAG conservé dans la demande d'approbation : chemin `Équipement → Symptôme → Historique → Procédure`, sources Neo4j, capteurs | Panneau d'approbation Streamlit et événement `approval_requested` |
+| **Art. 12 — Traçabilité des données et du raisonnement** | Contexte GraphRAG conservé dans la demande d'approbation : chemin `Équipement → Symptôme → Historique → Procédure`, sources Neo4j, capteurs | Graphe de raisonnement animé, panneau de décision, événement `approval_requested` |
 | **Art. 14 — Supervision humaine** | `policy.yaml` impose une approbation pour l'exécution ; l'outil métier n'est appelé qu'après décision `approved` | Boutons Approuver/Rejeter, blocage `ACTION_BLOQUEE`, refus tracé |
 | **Art. 14 — Capacité d'arrêter / d'ignorer une action** | Le rejet empêche l'appel à l'outil d'exécution ; l'agent reçoit explicitement le refus | `tool_blocked` + réponse finale « action non autorisée » |
 | **Art. 13 — Transparence et explicabilité** | Le chemin GraphRAG, les procédures, les historiques, les capteurs et les sources sont affichés à l'approbateur | Trace complète de l'agent et panneau d'approbation |
-| **Art. 15 — Robustesse et cybersécurité** | Chaîne HMAC, clé hors code, vérification à chaque rendu, échec explicite en cas de modification | Tests de falsification et de suppression d'enregistrements |
+| **Art. 15 — Robustesse et cybersécurité** | Chaîne HMAC, clé hors code, vérification à chaque rendu, échec explicite en cas de modification | Visualisation de la chaîne, démonstration de falsification sur copie isolée, tests `modify` / `delete` / `reorder` |
 
 > Ce PoC démontre des **mécanismes techniques**. Il ne constitue pas une certification AI Act : l'analyse de conformité, la documentation technique, la gestion des risques et l'évaluation humaine restent à produire.
 
@@ -125,6 +126,26 @@ Le serveur Preloop n'est pas inclus dans l'image Docker (dépendances lourdes : 
 
 ## 3. Démonstration
 
+### Aperçu
+
+**Graphe de raisonnement GraphRAG animé**
+
+![Graphe de raisonnement animé](docs/images/graph-rag.gif)
+
+**Alerte d'approbation bloquante et pulsante**
+
+![Alerte d'approbation](docs/images/alerte-approbation.gif)
+
+**Écrans de la démonstration**
+
+| Accueil | Approbation humaine requise |
+| --- | --- |
+| ![Accueil](docs/images/apercu-accueil.png) | ![Approbation](docs/images/apercu-approbation.png) |
+| **Chaîne d'audit vérifiée** | **Falsification détectée** |
+| ![Chaîne d'audit](docs/images/apercu-audit.png) | ![Falsification](docs/images/apercu-falsification.png) |
+
+Les captures correspondent au scénario `P-204 — vibration anormale`. Les hashes, identifiants de demande et tickets sont propres à chaque exécution.
+
 ### Prérequis
 
 - Docker Desktop avec Docker Compose v2.24+ ;
@@ -151,19 +172,21 @@ Puis ouvrir **http://localhost:8501**.
 
 ### Parcours guidé
 
-1. Cliquer sur **« Lancer la démonstration »**.
-2. Observer la trace : appel `query_knowledge_graph`, contexte GraphRAG, puis `propose_maintenance_action`.
-3. L'agent appelle `execute_maintenance_action`. Le harness crée une demande d'approbation et **bloque l'exécution**.
-4. Le panneau **« Approbation humaine requise »** affiche :
-   - l'équipement et l'action (`P-204`, `REMPLACER_ROULEMENT`) ;
-   - le chemin de raisonnement ;
-   - les sources Neo4j consultées ;
-   - la politique `require_approval` et l'identifiant de la demande.
-5. Saisir l'identité de l'approbateur (simulée), puis :
+1. Choisir un **scénario** dans la liste (P-204, C-101, M-310, V-450 ou E-120).
+2. Cliquer sur **« Lancer la démonstration »**.
+3. Observer le **graphe de raisonnement animé** : les nœuds et relations apparaissent dans l'ordre du parcours GraphRAG (`P-204 → S-VIB-01 → PR-ROUL-01 / PR-ALIGN-01`).
+4. L'agent appelle `execute_maintenance_action`. Le harness crée une demande d'approbation, **bloque l'exécution** et affiche une **bannière d'alerte pulsante**.
+5. Le panneau **« Décision de supervision »** affiche :
+   - l'équipement, l'action et le niveau de criticité (`P-204`, `REMPLACER_ROULEMENT`, `haute`) ;
+   - le chemin de raisonnement complet et les propriétés des nœuds consultés ;
+   - les sources Neo4j ;
+   - la politique `require_approval`, l'identifiant de la demande et l'horodatage.
+6. Saisir l'identité de l'approbateur (simulée), puis :
    - **Approuver** : l'agent reprend, l'outil d'exécution simulée s'exécute, un ticket est produit ;
    - **Rejeter** : une raison est obligatoire ; l'exécution reste bloquée et l'agent explique le refus.
-6. Vérifier en bas de page : **« Chaîne d'audit valide — N événement(s) vérifié(s) »**.
-7. Déplier **« Derniers événements du registre d'audit »** pour inspecter les enregistrements HMAC.
+7. Vérifier en bas de page la **chaîne d'audit HMAC visualisée** et le message **« Chaîne d'audit valide — N événement(s) vérifié(s) »**.
+8. Dans **« Preuve d'intégrité : simuler une falsification »**, choisir `Modifier`, `Supprimer` ou `Réordonner`, puis cliquer sur **« Simuler une falsification »** : la copie isolée est invalidée (`valid=False`) sans toucher au registre réel.
+9. Déplier **« Événements du registre d'audit »** pour inspecter les enregistrements.
 
 ### Vérification headless
 
@@ -222,7 +245,10 @@ industrial-agent-harness/
 │   ├── audit.py             # AuditLogger réel ou registre HMAC local
 │   └── governance.py        # PreloopTool réel ou enveloppe locale
 ├── ui/
-│   └── app.py               # console Streamlit
+│   ├── app.py               # console Streamlit
+│   └── visuals.py           # graphe animé, chaîne HMAC, alerte d'approbation
+├── docs/
+│   └── images/              # captures et GIF utilisés dans ce README
 ├── scripts/
 │   ├── demo.py              # scénario CLI headless
 │   └── mcp_server.py        # exposition MCP stdio des outils gouvernés
@@ -259,6 +285,16 @@ P-204 (Pompe centrifuge) → vibration anormale → historique 2024-03-12
 ```
 
 Sources collectées : `P-204`, `S-VIB-01`, `PR-ROUL-01`, `PR-ALIGN-01`, `H-2024-03-12`, `CAP-VIB-01`.
+
+Cinq scénarios sont proposés dans la console, avec le même pipeline et la même politique :
+
+| Équipement | Symptôme | Question |
+|---|---|---|
+| `P-204` | vibration anormale | « L'équipement P-204 présente une vibration anormale. Que faire ? » |
+| `C-101` | surchauffe | « L'équipement C-101 présente une surchauffe. Que faire ? » |
+| `M-310` | bruit métallique | « Le moteur M-310 émet un bruit métallique. Que faire ? » |
+| `V-450` | fuite d'huile | « La vanne V-450 présente une fuite d'huile. Que faire ? » |
+| `E-120` | débit insuffisant | « L'échangeur E-120 a un débit insuffisant. Que faire ? » |
 
 ---
 
@@ -317,16 +353,16 @@ Le script tente `langchain_mcp_adapters.create_mcp_server` (nom prévu par l'arc
 
 La suite couvre :
 
-- **`test_audit_chain.py`** : chaîne valide, altération de payload, suppression d'un enregistrement, mauvaise clé HMAC.
+- **`test_audit_chain.py`** : chaîne valide, altération de payload, suppression d'un enregistrement, mauvaise clé HMAC, détection des copies falsifiées (`modify`, `delete`, `reorder`) avec registre source intact.
 - **`test_harness.py`** : mapping des politiques, délégation au manager, attente Streamlit, décision, mode CLI.
 - **`test_agent.py`** : ordre `query → propose → execute`, boucle LangGraph, approbation demandée pour l'exécution, blocage en cas de rejet.
-- **`test_graph.py`** : formatage, extraction, comptage exact des nœuds/relations, chemins P-204, idempotence du seed.
+- **`test_graph.py`** : formatage, extraction, comptage exact des nœuds/relations, chemins P-204, payload du sous-graphe animé, idempotence du seed.
 - **`test_integration.py`** : scénario complet approuvé, scénario rejeté, boucle Streamlit avec approbation réelle via `AppTest`.
 
 Résultat attendu dans l'environnement Docker :
 
 ```text
-31 passed
+35 passed
 ```
 
 ---

@@ -7,13 +7,21 @@ from .approval import (
     record_decision,
     request_approval,
 )
-from .audit import get_events, log_event, verify_audit_chain
+from .audit import (
+    create_tampered_copy,
+    get_audit_log_path,
+    get_events,
+    log_event,
+    verify_audit_chain,
+)
 from .governance import govern_tool
 from .policy import get_policy_for_tool
 
 __all__ = [
     "clear_approvals",
+    "create_tampered_copy",
     "get_approval",
+    "get_audit_log_path",
     "get_events",
     "get_pending_approvals",
     "get_policy_for_tool",

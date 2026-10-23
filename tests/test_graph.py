@@ -12,6 +12,7 @@ from graph.queries import (
     extract_symptom,
     format_reasoning_path,
     get_reasoning_path,
+    get_reasoning_subgraph,
     query_knowledge_graph,
 )
 from graph.seed_graph import seed
@@ -133,6 +134,23 @@ def test_reasoning_path_for_p204(seeded_neo4j: bool) -> None:
     assert path["sensors"][0]["id"] == "CAP-VIB-01"
     assert any("PRÉSENTE" in relation for relation in path["relations"])
     assert any("A_CONSTATÉ" in relation for relation in path["relations"])
+
+
+def test_reasoning_subgraph_payload(seeded_neo4j: bool) -> None:
+    """The UI payload contains the expected nodes, edges and Cypher query."""
+    payload = get_reasoning_subgraph(
+        "L'équipement P-204 présente une vibration anormale. Que faire ?"
+    )
+
+    node_ids = {node["id"] for node in payload["nodes"]}
+    assert {"P-204", "S-VIB-01", "PR-ROUL-01", "H-2024-03-12", "CAP-VIB-01"} <= node_ids
+    edges = {(edge["source"], edge["target"], edge["label"]) for edge in payload["edges"]}
+    assert ("P-204", "S-VIB-01", "PRÉSENTE") in edges
+    assert ("S-VIB-01", "PR-ROUL-01", "RECOMMANDE") in edges
+    assert ("H-2024-03-12", "S-VIB-01", "A_CONSTATÉ") in edges
+    assert ("CAP-VIB-01", "P-204", "MESURE") in edges
+    assert payload["path_count"] == 1
+    assert "MATCH" in payload["cypher"]
 
 
 def test_query_knowledge_graph_context(seeded_neo4j: bool) -> None:

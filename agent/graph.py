@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Callable
 from typing import Annotated, Any, TypedDict
 
 from dotenv import load_dotenv
@@ -248,6 +249,7 @@ def run_agent(
     question: str,
     llm: BaseChatModel | None = None,
     tools: list[Any] | None = None,
+    on_update: Callable[[list[AnyMessage]], None] | None = None,
 ) -> list[AnyMessage]:
     """Run the maintenance agent to completion.
 
@@ -255,6 +257,9 @@ def run_agent(
         question: Natural language maintenance question.
         llm: Optional chat model override.
         tools: Optional tool override.
+        on_update: Optional callback receiving the message list after each
+            LangGraph super-step. Used by the Streamlit UI to display progress
+            while the agent is still running.
 
     Returns:
         The complete list of messages exchanged by the graph, ending with the
@@ -262,11 +267,27 @@ def run_agent(
     """
     graph = build_agent_graph(llm=llm, tools=tools)
     log_event("agent_run_started", actor="agent", payload={"question": question})
+    config = {"recursion_limit": int(os.getenv("AGENT_RECURSION_LIMIT", "30"))}
     try:
-        result = graph.invoke(
-            {"messages": [HumanMessage(content=question)]},
-            config={"recursion_limit": int(os.getenv("AGENT_RECURSION_LIMIT", "30"))},
-        )
+        if on_update is None:
+            result = graph.invoke(
+                {"messages": [HumanMessage(content=question)]},
+                config=config,
+            )
+        else:
+            result = None
+            for snapshot in graph.stream(
+                {"messages": [HumanMessage(content=question)]},
+                config=config,
+                stream_mode="values",
+            ):
+                result = snapshot
+                try:
+                    on_update(list(snapshot.get("messages", [])))
+                except Exception:  # pragma: no cover - UI callback must not break the agent
+                    logger.exception("Agent progress callback failed")
+            if result is None:
+                raise RuntimeError("The agent produced no state")
     except Exception as exc:
         log_event("agent_run_failed", actor="agent", payload={"question": question, "error": str(exc)})
         raise

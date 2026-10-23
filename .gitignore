@@ -6,7 +6,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
-var/*.jsonl
+var/
 *.egg-info/
 build/
 dist/

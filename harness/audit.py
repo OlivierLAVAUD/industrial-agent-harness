@@ -299,3 +299,89 @@ def verify_audit_chain() -> dict[str, Any]:
 def get_events(limit: int = 50) -> list[dict[str, Any]]:
     """Return the most recent audit events for display."""
     return get_audit_logger().read_events(limit=limit)
+
+
+def get_audit_log_path() -> Path:
+    """Return the path of the configured audit ledger.
+
+    Returns:
+        The local ledger path, or ``AUDIT_LOG_PATH`` when a non-local logger is
+        active.
+    """
+    logger = get_audit_logger()
+    path = getattr(logger, "path", None)
+    return Path(path) if path else Path(os.getenv("AUDIT_LOG_PATH", _DEFAULT_PATH))
+
+
+def create_tampered_copy(
+    source_path: str | Path | None = None,
+    destination_path: str | Path | None = None,
+    mode: str = "modify",
+) -> Path:
+    """Create a deliberately tampered copy of the ledger for the demo.
+
+    The live ledger is never modified: the copy is altered without re-signing
+    the HMAC, then the UI verifies it to demonstrate tamper detection.
+
+    Args:
+        source_path: Ledger to copy. Defaults to the configured audit path.
+        destination_path: Target copy. Defaults to ``<stem>_tampered.jsonl``.
+        mode: ``modify`` (change a payload), ``delete`` (remove a record) or
+            ``reorder`` (swap two records).
+
+    Returns:
+        The path of the tampered copy.
+
+    Raises:
+        FileNotFoundError: If the source ledger does not exist.
+        ValueError: If the ledger is empty, the mode is unknown, or the source
+            and destination are the same file.
+    """
+    source = Path(source_path) if source_path else get_audit_log_path()
+    if not source.exists():
+        raise FileNotFoundError(f"Audit ledger not found: {source}")
+
+    with _LOCK:
+        lines = [
+            line for line in source.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+    if not lines:
+        raise ValueError("The audit ledger is empty; run the demo first.")
+
+    records = [json.loads(line) for line in lines]
+    normalized_mode = mode.strip().lower()
+    if normalized_mode not in {"modify", "delete", "reorder"}:
+        raise ValueError(f"Unknown tamper mode: {mode}")
+    if normalized_mode in {"delete", "reorder"} and len(records) < 2:
+        raise ValueError("At least two audit events are required for this tampering mode")
+
+    index = len(records) // 2
+    if normalized_mode == "modify":
+        record = records[index]
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            payload = {"previous_payload": payload}
+        payload["tampered_demo"] = "payload altered without re-signing"
+        record["payload"] = payload
+    elif normalized_mode == "delete":
+        if index == len(records) - 1:
+            index -= 1
+        del records[index]
+    else:
+        other = index - 1 if index > 0 else index + 1
+        records[index], records[other] = records[other], records[index]
+
+    destination = (
+        Path(destination_path)
+        if destination_path
+        else source.with_name(f"{source.stem}_tampered{source.suffix}")
+    )
+    if destination.resolve() == source.resolve():
+        raise ValueError("The tampered copy must not overwrite the live ledger")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        "\n".join(_canonical_json(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    return destination

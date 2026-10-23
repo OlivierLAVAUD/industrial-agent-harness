@@ -20,7 +20,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-POLICY_FILE = Path(os.getenv("POLICY_FILE", Path(__file__).resolve().parents[1] / "policy.yaml"))
+_PACKAGE_POLICY_FILE = Path(__file__).resolve().parents[1] / "policy.yaml"
+_WORKDIR_POLICY_FILE = Path.cwd() / "policy.yaml"
+POLICY_FILE = Path(
+    os.getenv("POLICY_FILE")
+    or (_WORKDIR_POLICY_FILE if _WORKDIR_POLICY_FILE.exists() else _PACKAGE_POLICY_FILE)
+)
 
 try:  # pragma: no cover - depends on the installed Preloop distribution
     from preloop import PolicyManager as _PreloopPolicyManager  # type: ignore[attr-defined]

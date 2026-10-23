@@ -50,6 +50,9 @@ RETURN e, s, procedures, histories, collect(DISTINCT c) AS sensors
 ORDER BY s.id
 """
 
+# Public copy used by the UI to display the exact Cypher query.
+REASONING_PATH_CYPHER = _REASONING_PATH_QUERY.strip()
+
 _EQUIPMENT_EXISTS_QUERY = """
 MATCH (e:Equipment {id: $equipment_id})
 RETURN count(e) > 0 AS exists
@@ -392,6 +395,107 @@ def query_knowledge_graph_with_paths(question: str) -> tuple[str, list[dict[str,
         )
 
     return _format_context(equipment_id, paths), paths, equipment_id
+
+
+def get_reasoning_subgraph(question: str) -> dict[str, Any]:
+    """Build a structured subgraph payload for the reasoning visualization.
+
+    The payload contains plain dictionaries only, so it can be cached and
+    serialized by Streamlit. Nodes keep their business properties while edges
+    carry a display label (``PRÉSENTE``, ``RECOMMANDE``, ``A_CONSTATÉ``,
+    ``MESURE``) for the UI.
+
+    Args:
+        question: Natural language maintenance question.
+
+    Returns:
+        A dictionary with ``equipment``, ``paths``, ``nodes``, ``edges``,
+        ``context``, ``equipment_id``, ``path_count`` and ``cypher``.
+    """
+    context, paths, equipment_id = query_knowledge_graph_with_paths(question)
+
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: list[dict[str, str]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    def add_node(node: dict[str, Any], node_type: str, subtitle: str) -> None:
+        """Register a node once, keeping the richest display subtitle."""
+        node_id = str(node.get("id") or "")
+        if not node_id or node_id in nodes:
+            return
+        nodes[node_id] = {
+            "id": node_id,
+            "label": node_id,
+            "type": node_type,
+            "subtitle": subtitle,
+            "properties": node,
+        }
+
+    def add_edge(source: Any, target: Any, relation: str) -> None:
+        """Register a de-duplicated edge between two known node ids."""
+        source_id = str(source or "")
+        target_id = str(target or "")
+        if not source_id or not target_id:
+            return
+        key = (source_id, target_id, relation)
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edges.append({"source": source_id, "target": target_id, "label": relation})
+
+    equipment: dict[str, Any] | None = None
+    if paths:
+        equipment = paths[0].get("equipment") or {}
+        add_node(
+            equipment,
+            "equipment",
+            f"{equipment.get('name', '?')} · criticité {equipment.get('criticality', '?')}",
+        )
+
+        for path in paths:
+            symptom = path.get("symptom") or {}
+            add_node(
+                symptom,
+                "symptom",
+                f"{symptom.get('name', '?')} · sévérité {symptom.get('severity', '?')}",
+            )
+            add_edge(equipment.get("id"), symptom.get("id"), "PRÉSENTE")
+
+            for procedure in path.get("procedures", []):
+                add_node(
+                    procedure,
+                    "procedure",
+                    f"{procedure.get('code', '?')} · {procedure.get('duration_min', '?')} min",
+                )
+                add_edge(symptom.get("id"), procedure.get("id"), "RECOMMANDE")
+
+            for history in path.get("histories", []):
+                add_node(
+                    history,
+                    "history",
+                    f"{history.get('date', '?')} · {history.get('technician', '?')}",
+                )
+                add_edge(history.get("id"), symptom.get("id"), "A_CONSTATÉ")
+
+            for sensor in path.get("sensors", []):
+                add_node(
+                    sensor,
+                    "sensor",
+                    f"{sensor.get('name', '?')} · {sensor.get('last_value', '?')} "
+                    f"{sensor.get('unit', '')}".strip(),
+                )
+                add_edge(sensor.get("id"), equipment.get("id"), "MESURE")
+
+    return {
+        "equipment": equipment,
+        "equipment_id": equipment_id,
+        "paths": paths,
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "context": context,
+        "path_count": len(paths),
+        "cypher": REASONING_PATH_CYPHER,
+    }
 
 
 def query_knowledge_graph(question: str) -> str:

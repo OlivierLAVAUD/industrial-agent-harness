@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness.audit import LocalAuditLogger, log_event, verify_audit_chain
+import pytest
+
+from harness.audit import (
+    LocalAuditLogger,
+    create_tampered_copy,
+    log_event,
+    verify_audit_chain,
+)
 
 
 def test_valid_chain(tmp_path: Path) -> None:
@@ -67,6 +74,25 @@ def test_wrong_hmac_key_invalidates_chain(tmp_path: Path) -> None:
 
     assert result["valid"] is False
     assert result["events_checked"] == 1
+
+
+@pytest.mark.parametrize("mode", ["modify", "delete", "reorder"])
+def test_tampered_copy_is_detected(tmp_path: Path, mode: str) -> None:
+    """The demo copy is detected as invalid while the live ledger stays intact."""
+    source = tmp_path / "source.jsonl"
+    ledger = LocalAuditLogger(source, key="demo-key")
+    for index in range(4):
+        ledger.log_event("event", actor="agent", payload={"index": index})
+
+    copy_path = create_tampered_copy(
+        source_path=source,
+        destination_path=tmp_path / f"{mode}.jsonl",
+        mode=mode,
+    )
+
+    tampered = LocalAuditLogger(copy_path, key="demo-key").verify_chain()
+    assert tampered["valid"] is False
+    assert LocalAuditLogger(source, key="demo-key").verify_chain()["valid"] is True
 
 
 def test_public_helpers_use_the_global_ledger() -> None:
